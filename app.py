@@ -1,3 +1,15 @@
+"""
+Twitter Sentiment Analyzer — Streamlit frontend
+Serves two models trained in the notebook:
+  1. SVC pipeline  -> sentiment_svm_pipeline.pkl + label_encoder.pkl
+  2. SimpleRNN     -> sentiment_rnn_model.keras
+
+Put these 3 files next to this script, then run:
+    streamlit run app.py
+
+If you haven't saved the RNN model yet:
+    rnn_model.save("sentiment_rnn_model.keras")
+"""
 
 import re
 import pickle
@@ -6,61 +18,41 @@ import streamlit as st
 import tensorflow as tf
 
 # ----------------------------- Page setup -----------------------------
-st.set_page_config(page_title="Tweet Sentiment Analyzer", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Tweet Sentiment Analyzer", page_icon="💬", layout="centered")
 
+# Minimal styling only — no forced background, so it follows the user's
+# light/dark theme setting automatically.
 st.markdown("""
 <style>
-.stApp {
-    background: linear-gradient(160deg, #0f1220 0%, #1a1f3a 100%);
-    color: #eaeaf5;
+.result-card {
+    border-left: 6px solid var(--accent-color);
+    border-radius: 8px;
+    padding: 0.9rem 1.2rem;
+    margin-top: 0.4rem;
+    background: rgba(127, 127, 127, 0.08);
 }
-.hero {
-    text-align: center;
-    padding: 1.6rem 0 0.8rem 0;
-}
-.hero h1 {
-    font-size: 2.4rem;
-    background: linear-gradient(90deg, #7f5af0, #2cb67d);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.2rem;
-}
-.hero p { color: #a0a0b8; font-size: 1rem; }
-
-.card {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 1.4rem;
-    text-align: center;
-}
-.badge {
-    display: inline-block;
-    padding: 0.5rem 1.4rem;
-    border-radius: 999px;
-    font-weight: 700;
-    font-size: 1.2rem;
-    margin: 0.6rem 0;
-}
+.result-card h4 { margin: 0 0 0.3rem 0; font-size: 0.9rem; opacity: 0.7; }
+.result-card .label { font-size: 1.3rem; font-weight: 700; }
+.result-card .conf { font-size: 0.85rem; opacity: 0.7; }
 .stButton>button {
-    background: linear-gradient(90deg, #7f5af0, #6246ea);
+    background: #0ea5a4;
     color: white;
     border: none;
-    border-radius: 10px;
-    padding: 0.6rem 1.4rem;
+    border-radius: 8px;
     font-weight: 600;
     width: 100%;
 }
-textarea { background: rgba(255,255,255,0.05) !important; color: #eaeaf5 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 SENTIMENT_STYLE = {
-    "Positive":   {"color": "#2cb67d", "emoji": "😊"},
-    "Negative":   {"color": "#e53170", "emoji": "😠"},
-    "Neutral":    {"color": "#7f9cf5", "emoji": "😐"},
-    "Irrelevant": {"color": "#a0a0b8", "emoji": "🤷"},
+    "Positive":   {"color": "#22c55e", "emoji": "😊"},
+    "Negative":   {"color": "#f43f5e", "emoji": "😠"},
+    "Neutral":    {"color": "#0ea5e9", "emoji": "😐"},
+    "Irrelevant": {"color": "#a855f7", "emoji": "🤷"},
 }
+
+LABELS = ["Irrelevant", "Negative", "Neutral", "Positive"]  # alphabetical, matches LabelEncoder
 
 # ----------------------------- Text cleaning (same as training) -----------------------------
 def clean_tweet(text):
@@ -85,81 +77,52 @@ def load_svm():
 def load_rnn():
     return tf.keras.models.load_model("sentiment_rnn_model.keras")
 
-LABELS = ["Irrelevant", "Negative", "Neutral", "Positive"]  # alphabetical, matches LabelEncoder
-
 def svm_predict(pipeline, le, clean_text):
     scores = pipeline.decision_function([clean_text])[0]
-    probs = np.exp(scores) / np.exp(scores).sum()          # softmax over decision scores
+    probs = np.exp(scores) / np.exp(scores).sum()
     pred_idx = int(np.argmax(probs))
-    return le.classes_[pred_idx], probs, list(le.classes_)
+    return le.classes_[pred_idx], float(probs[pred_idx])
 
 def rnn_predict(model, clean_text):
     probs = model.predict(tf.constant([clean_text]), verbose=0)[0]
     pred_idx = int(np.argmax(probs))
-    return LABELS[pred_idx], probs, LABELS
+    return LABELS[pred_idx], float(probs[pred_idx])
 
-def render_result(model_name, label, probs, classes):
-    style = SENTIMENT_STYLE.get(label, {"color": "#ffffff", "emoji": ""})
+def render_result(model_name, label, confidence):
+    style = SENTIMENT_STYLE.get(label, {"color": "#888", "emoji": ""})
     st.markdown(f"""
-    <div class="card">
-        <p style="color:#a0a0b8;margin-bottom:0;">{model_name}</p>
-        <div class="badge" style="background:{style['color']}22;color:{style['color']};border:1px solid {style['color']};">
-            {style['emoji']} {label}
-        </div>
+    <div class="result-card" style="--accent-color:{style['color']}">
+        <h4>{model_name}</h4>
+        <div class="label" style="color:{style['color']}">{style['emoji']} {label}</div>
+        <div class="conf">Confidence: {confidence*100:.1f}%</div>
     </div>
     """, unsafe_allow_html=True)
-    st.write("")
-    st.bar_chart({classes[i]: float(probs[i]) for i in range(len(classes))})
 
-# ----------------------------- Header -----------------------------
-st.markdown("""
-<div class="hero">
-    <h1>💬 Tweet Sentiment Analyzer</h1>
-    <p>Compare an SVC (TF-IDF + LinearSVC) model against a Bidirectional SimpleRNN</p>
-</div>
-""", unsafe_allow_html=True)
+# ----------------------------- UI -----------------------------
+st.title("💬 Tweet Sentiment Analyzer")
+st.caption("SVC (TF-IDF + LinearSVC) vs. Bidirectional SimpleRNN")
 
-# ----------------------------- Sidebar -----------------------------
-st.sidebar.header("⚙️ Settings")
-model_choice = st.sidebar.radio("Choose model(s)", ["Both (compare)", "SVC only", "SimpleRNN only"])
-st.sidebar.markdown("---")
-st.sidebar.caption("Classes: Irrelevant · Negative · Neutral · Positive")
-
-# ----------------------------- Input -----------------------------
+model_choice = st.selectbox("Choose a model:", ["SVC", "SimpleRNN"])
 tweet = st.text_area("Enter a tweet:", height=110, placeholder="e.g. This new update completely ruined the game...")
-run = st.button("Analyze Sentiment 🚀")
+run = st.button("Analyze")
 
 if run:
     if not tweet.strip():
         st.warning("Please type a tweet first.")
     else:
         cleaned = clean_tweet(tweet)
-        st.caption(f"Cleaned text passed to models: `{cleaned}`")
 
-        need_svm = model_choice in ("Both (compare)", "SVC only")
-        need_rnn = model_choice in ("Both (compare)", "SimpleRNN only")
-
-        cols = st.columns(int(need_svm) + int(need_rnn))
-        col_i = 0
-
-        if need_svm:
+        if model_choice == "SVC":
             try:
                 pipeline, le = load_svm()
-                label, probs, classes = svm_predict(pipeline, le, cleaned)
-                with cols[col_i]:
-                    render_result("SVC (TF-IDF + LinearSVC)", label, probs, classes)
-                col_i += 1
+                label, conf = svm_predict(pipeline, le, cleaned)
+                render_result("SVC", label, conf)
             except FileNotFoundError:
-                st.error("Missing sentiment_svm_pipeline.pkl / label_encoder.pkl in the app folder.")
-
-        if need_rnn:
+                st.error("Missing sentiment_svm_pipeline.pkl / label_encoder.pkl")
+        else:
             try:
                 model = load_rnn()
-                label, probs, classes = rnn_predict(model, cleaned)
-                with cols[col_i]:
-                    render_result("Bidirectional SimpleRNN", label, probs, classes)
+                label, conf = rnn_predict(model, cleaned)
+                render_result("SimpleRNN", label, conf)
             except (FileNotFoundError, OSError):
-                st.error("Missing sentiment_rnn_model.keras in the app folder.")
-
-st.markdown("---")
-st.caption("SVC confidence is derived from decision-function scores (softmax'd), not true probabilities. RNN confidence is the model's softmax output.")
+                st.error("Missing sentiment_rnn_model.keras")
